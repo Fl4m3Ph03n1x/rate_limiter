@@ -58,8 +58,8 @@ at once, and isolates failures in supervised tasks.
   a `GenServer.call` to that process. Only `:noproc` and shutdown exits become
   `{:error, :not_running}`; a call timeout under heavy load still exits the
   caller.
-- **Algorithms see only time.** An algorithm cannot weigh work by cost, look
-  at the queue, or slow down after an upstream `429`.
+- **Algorithms see only time.** An algorithm cannot weigh work by cost or look
+  at the queue.
 - **Pacing counts starts, not arrivals.** Network jitter can still bunch
   requests together before they reach the server.
 - **Per node, not shared.** Each limiter enforces its own budget. Two nodes, or
@@ -97,9 +97,6 @@ the algorithm's `init/1`, so algorithm settings go in the same list.
 Every other option belongs to the chosen algorithm, which documents its own.
 The examples below use `RateLimiter.LeakyBucket`, which requires
 `:requests_per_second`.
-
-`:clock` and `:send_after` also exist so tests can control time. Production
-code should leave them unset.
 
 A missing `:name` raises `KeyError` in the caller. Any other missing or invalid
 option makes the limiter process exit during startup. A supervisor then reports
@@ -168,8 +165,15 @@ end
 | `{:error, :timeout}` | No reply in time. The work still runs; its reply is dropped. |
 
 `await/2` blocks, so a GenServer should match the reply in `handle_info/2`
-instead. The messages are `{ref, {:ok, result}}`, `{ref, {:exit, reason}}`, and
-`{:DOWN, ref, :process, pid, reason}` when the limiter stops first:
+instead. It receives one of:
+
+| Message | Meaning |
+| --- | --- |
+| `{ref, {:ok, result}}` | The function returned `result`. |
+| `{ref, {:exit, reason}}` | The function raised, threw, or exited. |
+| `{:DOWN, ref, :process, pid, reason}` | The limiter stopped before the work finished. |
+
+For example:
 
 ```elixir
 def handle_cast({:search, query}, state) do
@@ -247,7 +251,6 @@ mix test
 mix credo --strict
 mix dialyzer
 mix docs
-git diff --check
 ```
 
 The tests never sleep to wait for pacing. They block tasks until the test
@@ -267,33 +270,36 @@ something is waiting, no timer is pending, a slot is free, and the algorithm
 allows it.
 
 ```mermaid
-flowchart TD
-  Host["Host supervisor"] -->|"child_spec/1"| Limiter
-  Caller["Caller process"] -->|"enqueue/2 or submit/2"| Admit
-  Caller -->|"status/1"| Status
-  Caller -.-|"submit/2: monitors via reply alias"| Limiter
-
-  subgraph Limiter["RateLimiter process: state held in memory"]
-    Admit{"waiting < max_waiting?"}
-    Admit -->|no| Reject["reply {:error, :queue_full}"]
-    Admit -->|yes| Queue["append work and its reply alias<br/>reply :ok"]
-    Queue --> Dispatch{"work waiting, no timer pending,<br/>and active < max_active?"}
-    Dispatch -->|no| Idle["wait for the next event"]
-    Dispatch -->|yes| Acquire["algorithm.acquire(state, clock.())"]
-    Acquire -->|"{:wait, ms, state}"| Timer["send_after(self(), :dispatch, ms)"]
-    Acquire -->|"{:ok, state}"| Start["dequeue oldest work<br/>Task.Supervisor.async_nolink"]
-    Start --> Dispatch
-    Finish["{ref, :ok} or :DOWN received<br/>free slot, log crashes,<br/>notify submitter of exits"] --> Dispatch
-    Status["reply {:ok, %{waiting, active}}"]
+sequenceDiagram
+  box Caller process
+    participant Caller
+  end
+  box Limiter process
+    participant Limiter as RateLimiter
+    participant Algorithm
+  end
+  box Task process
+    participant Task
   end
 
-  Acquire -.-|"pure call"| Algorithm["algorithm module<br/>implements RateLimiter.Algorithm"]
-  Timer -.->|":dispatch after ms"| Dispatch
-  Limiter ---|"linked: live and die together"| TaskSup["Task.Supervisor<br/>owned by this limiter"]
-  Start --> TaskSup
-  TaskSup -->|"linked"| Task["Task running the submitted function"]
-  Task -.->|"monitored: {ref, :ok} or :DOWN"| Finish
-  Task -.->|"submit/2: {ref, {:ok, result}}"| Caller
-  Finish -.->|"submit/2: {ref, {:exit, reason}}"| Caller
+  Caller->>Limiter: submit/2 or enqueue/2
+  alt queue full
+    Limiter-->>Caller: {:error, :queue_full}
+  else accepted
+    Limiter-->>Caller: {:ok, ref} or :ok
+    Note over Limiter: work waits in the FIFO queue
+    loop until a slot is free and the algorithm allows a start
+      Limiter->>Algorithm: may the next task start?
+      Algorithm-->>Limiter: yes, or wait N ms
+    end
+    Limiter->>Task: start the submitted work
+    Task-->>Caller: result, collected with await/2 (submit/2 only)
+    Task-->>Limiter: done, slot freed
+  end
 ```
 
+## License
+
+RateLimiter is released under the MIT License. See
+[LICENSE](https://github.com/Fl4m3Ph03n1x/rate_limiter/blob/main/LICENSE) for
+the full text.
