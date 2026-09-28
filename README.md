@@ -2,6 +2,9 @@
     <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/releases/tag/v2.0.0">
         <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version"/>
     </a>
+    <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/actions/workflows/ci.yml">
+        <img src="https://github.com/Fl4m3Ph03n1x/rate_limiter/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/>
+    </a>
 </p>
 
 # RateLimiter
