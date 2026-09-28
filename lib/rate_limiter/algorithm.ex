@@ -20,7 +20,7 @@ defmodule RateLimiter.Algorithm do
   """
   @type state() :: any()
 
-  @typedoc "A monotonic timestamp in milliseconds, which may be negative."
+  @typedoc "A monotonic timestamp in milliseconds, which may be negative and may repeat."
   @type now() :: integer()
 
   @typedoc "Milliseconds to wait before asking again; always strictly positive."
@@ -38,12 +38,9 @@ defmodule RateLimiter.Algorithm do
   @doc """
   Reports whether one task may start at `now`.
 
-  `{:ok, state}` authorizes exactly one immediate start.
-  `{:wait, wait_time, state}` defers. A zero-millisecond wait is not a wait and
-  must be reported as `{:ok, state}`.
-
-  `now` is not guaranteed to advance between calls, so two calls sharing one
-  `now` must not both be authorized.
+  The algorithm alone decides when work may start. `{:ok, state}` authorizes
+  exactly one immediate start. `{:wait, wait_time, state}` defers. A
+  zero-millisecond wait is not a wait and must be reported as `{:ok, state}`.
   """
   @callback acquire(state(), now()) :: {:ok, state()} | {:wait, wait_time(), state()}
 end

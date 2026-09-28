@@ -208,10 +208,12 @@ A reference can be awaited once, and only by the process that called
 
 ### Writing an algorithm
 
-An algorithm is a pure module: no processes, timers, or clock reads.
-`acquire/2` must return `{:ok, state}` rather than a zero-millisecond wait, and
-must not authorize two starts for the same `now`. This one keeps a fixed gap,
-in milliseconds, between starts:
+An algorithm is a pure module: no processes, timers, or clock reads. It alone
+decides when work may start. `acquire/2` returns `{:ok, state}` to allow one
+start now, or `{:wait, ms, state}` to defer; a zero-millisecond wait must be
+`{:ok, state}` instead. `now` is in monotonic milliseconds, so it may be
+negative and may repeat. This one keeps a fixed gap, in milliseconds, between
+starts:
 
 ```elixir
 defmodule MyApp.MinimumGap do
@@ -264,10 +266,9 @@ releases them, and they replace the clock and timer for time-dependent cases.
 | `RateLimiter.Algorithm` | Behaviour for pure pacing decisions: `init/1` and `acquire/2`. |
 | Algorithm modules | Pacing policies implementing `RateLimiter.Algorithm`, for example `RateLimiter.LeakyBucket`. Each limiter names its own; there is no default. |
 
-The limiter tries to start work after every accepted `enqueue/2` or `submit/2`,
-every finished task, and every timer message. It starts work only when
-something is waiting, no timer is pending, a slot is free, and the algorithm
-allows it.
+The limiter tries to start work whenever new work is accepted, a task finishes,
+or a wait requested by the algorithm ends. It starts work only when something
+is waiting, a slot is free, and the algorithm allows it.
 
 ```mermaid
 sequenceDiagram

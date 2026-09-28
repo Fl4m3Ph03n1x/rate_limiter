@@ -60,7 +60,7 @@ defmodule RateLimiter do
 
   require Logger
 
-  alias RateLimiter.Algorithm
+  alias RateLimiter.{Algorithm, Options}
 
   @typedoc "A supervised limiter, by registered name or pid."
   @type limiter() :: GenServer.server()
@@ -223,8 +223,8 @@ defmodule RateLimiter do
     algorithm = Keyword.fetch!(opts, :algorithm)
 
     # If any of these calls fail, we do not start the `task_supervisor`.
-    max_waiting = positive_integer!(opts, :max_waiting)
-    max_active = positive_integer!(opts, :max_active)
+    max_waiting = Options.positive_integer!(opts, :max_waiting)
+    max_active = Options.positive_integer!(opts, :max_active)
     algorithm_state = algorithm.init(opts)
 
     {:ok, task_supervisor} = Task.Supervisor.start_link()
@@ -422,15 +422,4 @@ defmodule RateLimiter do
   end
 
   defp notify(_reply_to, _outcome), do: :ok
-
-  @spec positive_integer!(keyword(), atom()) :: pos_integer()
-  defp positive_integer!(opts, key) do
-    value = Keyword.fetch!(opts, key)
-
-    if is_integer(value) and value > 0 do
-      value
-    else
-      raise ArgumentError, "#{inspect(key)} must be a positive integer, got: #{inspect(value)}"
-    end
-  end
 end

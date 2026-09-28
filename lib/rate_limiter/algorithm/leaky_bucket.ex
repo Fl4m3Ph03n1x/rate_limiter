@@ -1,4 +1,4 @@
-defmodule RateLimiter.LeakyBucket do
+defmodule RateLimiter.Algorithm.LeakyBucket do
   @moduledoc """
   Paces starts evenly at one per interval, with no burst and no catch-up.
 

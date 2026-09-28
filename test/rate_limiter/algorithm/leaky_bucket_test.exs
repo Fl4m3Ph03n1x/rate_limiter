@@ -1,7 +1,7 @@
-defmodule RateLimiter.LeakyBucketTest do
+defmodule RateLimiter.Algorithm.LeakyBucketTest do
   use ExUnit.Case, async: true
 
-  alias RateLimiter.LeakyBucket
+  alias RateLimiter.Algorithm.LeakyBucket
 
   test "three requests per second space starts 334 ms apart" do
     {:ok, bucket} = LeakyBucket.acquire(LeakyBucket.init(requests_per_second: 3), 0)
