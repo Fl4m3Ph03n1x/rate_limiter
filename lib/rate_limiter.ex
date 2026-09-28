@@ -6,7 +6,7 @@ defmodule RateLimiter do
 
       {RateLimiter,
        name: MyApp.SomeApiLimiter,
-       algorithm: RateLimiter.LeakyBucket,
+       algorithm: RateLimiter.Algorithm.LeakyBucket,
        requests_per_second: 3,
        max_waiting: 500,
        max_active: 12}

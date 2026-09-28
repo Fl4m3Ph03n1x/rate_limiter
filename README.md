@@ -94,13 +94,24 @@ the algorithm's `init/1`, so algorithm settings go in the same list.
 | `:max_waiting` | `RateLimiter` | Positive integer: work allowed to wait in the queue. |
 | `:max_active` | `RateLimiter` | Positive integer: tasks allowed to run at once. |
 
-Every other option belongs to the chosen algorithm, which documents its own.
-The examples below use `RateLimiter.LeakyBucket`, which requires
-`:requests_per_second`.
+Every other option belongs to the chosen algorithm; see
+[Algorithms](#algorithms). 
 
 A missing `:name` raises `KeyError` in the caller. Any other missing or invalid
 option makes the limiter process exit during startup. A supervisor then reports
 `{:error, {exception, stacktrace}}` and the limiter never starts.
+
+### Algorithms
+
+The `:algorithm` option picks how the limiter paces starts. Its own options go
+in the same list as the limiter's.
+
+| Algorithm | What it does | Options to start |
+| --- | --- | --- |
+| `RateLimiter.Algorithm.LeakyBucket` | Spaces starts evenly at one per interval, with no bursts and no catch-up after a delay. | `:requests_per_second`: integer in `1..1000`. |
+| `RateLimiter.Algorithm.TokenBucket` | Allows bursts. The bucket starts full, each start spends a token, and tokens return at a steady rate up to the bucket size. | `:bucket_size`: positive integer, the most tokens the bucket holds. `:refill_interval_ms`: positive integer, the milliseconds per returned token. |
+
+To pace work some other way, see [Writing an algorithm](#writing-an-algorithm).
 
 ### Starting limiters
 
@@ -111,13 +122,13 @@ names run side by side:
 children = [
   {RateLimiter,
    name: MyApp.SearchApiLimiter,
-   algorithm: RateLimiter.LeakyBucket,
+   algorithm: RateLimiter.Algorithm.LeakyBucket,
    requests_per_second: 3,
    max_waiting: 500,
    max_active: 12},
   {RateLimiter,
    name: MyApp.ReportApiLimiter,
-   algorithm: RateLimiter.LeakyBucket,
+   algorithm: RateLimiter.Algorithm.LeakyBucket,
    requests_per_second: 1,
    max_waiting: 50,
    max_active: 1}
@@ -264,11 +275,10 @@ releases them, and they replace the clock and timer for time-dependent cases.
 | --- | --- |
 | `RateLimiter` | The limiter process: admission, the FIFO queue, dispatch, the concurrency cap, task monitoring, and reply delivery for `submit/2`. |
 | `RateLimiter.Algorithm` | Behaviour for pure pacing decisions: `init/1` and `acquire/2`. |
-| Algorithm modules | Pacing policies implementing `RateLimiter.Algorithm`, for example `RateLimiter.LeakyBucket`. Each limiter names its own; there is no default. |
+| Algorithm modules | Pacing policies implementing `RateLimiter.Algorithm`, listed under [Algorithms](#algorithms). Each limiter names its own; there is no default. |
+| `RateLimiter.Options` | Startup option validation, shared by the limiter and algorithms. |
 
-The limiter tries to start work whenever new work is accepted, a task finishes,
-or a wait requested by the algorithm ends. It starts work only when something
-is waiting, a slot is free, and the algorithm allows it.
+The limiter starts work only when something is waiting, a slot is free, and the algorithm allows it.
 
 ```mermaid
 sequenceDiagram
