@@ -1,3 +1,13 @@
+<div align="center">
+<pre>
+    ____        __       __    _           _ __&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+   / __ \____ _/ /____  / /   (_)___ ___  (_) /____  _____
+  / /_/ / __ `/ __/ _ \/ /   / / __ `__ \/ / __/ _ \/ ___/
+ / _, _/ /_/ / /_/  __/ /___/ / / / / / / / /_/  __/ /&nbsp;&nbsp;&nbsp;&nbsp;
+/_/ |_|\__,_/\__/\___/_____/_/_/ /_/ /_/_/\__/\___/_/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+</pre>
+</div>
+
 <p align="center">
     <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/releases/tag/v2.0.0">
         <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version"/>
