@@ -54,6 +54,21 @@ defmodule RateLimiterTest do
     def acquire(:closed, _now), do: {:wait, 100, :closed}
   end
 
+  defmodule RejectsOptions do
+    @moduledoc """
+    Rejects every option list, as an algorithm does when its settings are invalid.
+
+    Lets a test observe how the limiter reports a failure raised by `init/1`.
+    """
+    @behaviour RateLimiter.Algorithm
+
+    @impl RateLimiter.Algorithm
+    def init(_opts), do: raise(ArgumentError, "invalid algorithm options")
+
+    @impl RateLimiter.Algorithm
+    def acquire(state, _now), do: {:ok, state}
+  end
+
   test "enqueue returns once work is accepted, before the work finishes", %{test: test} do
     limiter =
       start_supervised!(
@@ -356,6 +371,21 @@ defmodule RateLimiterTest do
              )
 
     assert message == ":max_active must be a positive integer, got: 1.5"
+  end
+
+  @tag capture_log: true
+  test "start_link fails when the algorithm rejects its options", %{test: test} do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, {%ArgumentError{message: message}, _stacktrace}} =
+             RateLimiter.start_link(
+               name: test,
+               algorithm: RejectsOptions,
+               max_waiting: 1,
+               max_active: 1
+             )
+
+    assert message == "invalid algorithm options"
   end
 
   test "submit delivers the work's result to await", %{test: test} do
