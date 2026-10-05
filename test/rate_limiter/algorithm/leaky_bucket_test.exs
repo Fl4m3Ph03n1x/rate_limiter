@@ -59,19 +59,19 @@ defmodule RateLimiter.Algorithm.LeakyBucketTest do
 
   test "init rejects a rate below one request per second" do
     assert_raise ArgumentError,
-                 ":requests_per_second must be an integer greater than 0 and less than or equal to 1000, got: 0",
+                 ":requests_per_second must be a positive integer, got: 0",
                  fn -> LeakyBucket.init(requests_per_second: 0) end
   end
 
   test "init rejects a rate above one request per millisecond" do
     assert_raise ArgumentError,
-                 ":requests_per_second must be an integer greater than 0 and less than or equal to 1000, got: 1001",
+                 ":requests_per_second must be an integer less than or equal to 1000, got: 1001",
                  fn -> LeakyBucket.init(requests_per_second: 1_001) end
   end
 
   test "init rejects a non-integer rate" do
     assert_raise ArgumentError,
-                 ":requests_per_second must be an integer greater than 0 and less than or equal to 1000, got: 2.5",
+                 ":requests_per_second must be a positive integer, got: 2.5",
                  fn -> LeakyBucket.init(requests_per_second: 2.5) end
   end
 end

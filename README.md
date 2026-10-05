@@ -9,7 +9,7 @@
 </div>
 
 <p align="center">
-    <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/releases/tag/2.0.1"><img src="https://img.shields.io/badge/version-2.0.1-blue" alt="Version"/></a>
+    <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/releases/tag/2.1.0"><img src="https://img.shields.io/badge/version-2.1.0-blue" alt="Version"/></a>
     <a href="https://github.com/Fl4m3Ph03n1x/rate_limiter/actions/workflows/ci.yml"><img src="https://github.com/Fl4m3Ph03n1x/rate_limiter/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/></a>
 </p>
 
@@ -60,7 +60,7 @@ at once, and isolates failures in supervised tasks.
   lost even though the work ran. There is no persistence or replay.
 - **Accepted work cannot be cancelled individually.** Once admitted, work runs
   unless the limiter stops or `discard_waiting/1` drops it before it starts,
-  even after an `await/2` timeout, `forget/1`, or its caller's death. 
+  even after an `await/2` timeout, `forget/1`, or its caller's death.
 - **Awaiting your own limiter can block.** A task that submits to its own
   limiter and awaits the reply keeps its slot while it waits. When every slot is
   busy, the inner work cannot start and the await times out.
@@ -85,7 +85,7 @@ no processes of its own; the host application supervises every limiter.
 ```elixir
 def deps do
   [
-    {:rate_limiter, github: "Fl4m3Ph03n1x/rate_limiter", tag: "2.0.1"}
+    {:rate_limiter, github: "Fl4m3Ph03n1x/rate_limiter", tag: "2.1.0"}
   ]
 end
 ```
@@ -105,7 +105,7 @@ the algorithm's `init/1`, so algorithm settings go in the same list.
 | `:max_active` | `RateLimiter` | Positive integer: tasks allowed to run at once. |
 
 Every other option belongs to the chosen algorithm; see
-[Algorithms](#algorithms). 
+[Algorithms](#algorithms).
 
 A missing `:name` raises `KeyError` in the caller. Any other missing or invalid
 option makes the limiter process exit during startup. A supervisor then reports
@@ -118,6 +118,7 @@ in the same list as the limiter's.
 
 | Algorithm | What it does | Options to start |
 | --- | --- | --- |
+| `RateLimiter.Algorithm.FixedWindow` | Allows up to a fixed number of starts per window. A window opens at the first start after the previous one ends; once its limit is reached, work waits for the window to end. Up to twice the limit can start across a window boundary. | `:requests_per_window`: positive integer, the most starts in one window. `:window_duration_ms`: positive integer, the window's length in milliseconds. |
 | `RateLimiter.Algorithm.LeakyBucket` | Spaces starts evenly at one per interval, with no bursts and no catch-up after a delay. | `:requests_per_second`: integer in `1..1000`. |
 | `RateLimiter.Algorithm.TokenBucket` | Allows bursts. The bucket starts full, each start spends a token, and tokens return at a steady rate up to the bucket size. | `:bucket_size`: positive integer, the most tokens the bucket holds. `:refill_interval_ms`: positive integer, the milliseconds per returned token. |
 

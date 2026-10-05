@@ -19,6 +19,7 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
   @milliseconds_per_second 1_000
 
   alias RateLimiter.Algorithm
+  alias RateLimiter.Options
 
   @typedoc "The minimum gap between starts, and the previous actual start."
   @type t :: %__MODULE__{
@@ -38,12 +39,11 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
   @impl Algorithm
   @spec init(keyword()) :: t()
   def init(opts) do
-    requests_per_second = Keyword.fetch!(opts, :requests_per_second)
+    requests_per_second = Options.positive_integer!(opts, :requests_per_second)
 
-    if not is_integer(requests_per_second) or requests_per_second <= 0 or
-         requests_per_second > @milliseconds_per_second do
+    if requests_per_second > @milliseconds_per_second do
       raise ArgumentError,
-            ":requests_per_second must be an integer greater than 0 and less than or equal to #{@milliseconds_per_second}, got: #{inspect(requests_per_second)}"
+            ":requests_per_second must be an integer less than or equal to #{@milliseconds_per_second}, got: #{inspect(requests_per_second)}"
     end
 
     interval = div(@milliseconds_per_second + requests_per_second - 1, requests_per_second)
