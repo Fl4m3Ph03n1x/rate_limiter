@@ -28,8 +28,8 @@ defmodule RateLimiter do
   the limiter through the reply reference. If the limiter stops first, the
   submitter receives `:DOWN` instead. After an `await/2` timeout or `forget/1`,
   a late reply is dropped rather than left in the mailbox. Neither cancels the
-  work: once accepted, it runs unless the limiter stops, even when its caller
-  has given up or died.
+  work: once accepted, it runs unless the limiter stops or `discard_waiting/1`
+  drops it before it starts, even when its caller has given up or died.
 
   Work is released in FIFO order, whichever entry point accepted it. When the
   waiting queue is full the limiter rejects new work immediately rather than
@@ -74,8 +74,11 @@ defmodule RateLimiter do
   @typedoc "Identifies one `submit/2` and tags its reply."
   @type reply_ref() :: reference()
 
-  @typedoc "How submitted work finished: its result, or the reason it exited."
-  @type reply() :: {:ok, any()} | {:exit, any()}
+  @typedoc """
+  How submitted work finished: its result, the reason it exited, or that it was
+  discarded before starting.
+  """
+  @type reply() :: {:ok, any()} | {:exit, any()} | {:error, :discarded}
 
   # A function returning the current monotonic time in milliseconds.
   @typep clock() :: (-> integer())
@@ -141,6 +144,8 @@ defmodule RateLimiter do
 
     * `{ref, {:ok, result}}` when `fun` returns `result`;
     * `{ref, {:exit, reason}}` when it raises, throws, or exits;
+    * `{ref, {:error, :discarded}}` when `discard_waiting/1` drops it before it
+      starts;
     * `{:DOWN, ref, :process, pid, reason}` when the limiter stops first.
 
   Only the calling process receives it. A task that submits to its own limiter
@@ -160,6 +165,7 @@ defmodule RateLimiter do
   `submit/2`.
 
   Returns `{:ok, result}` or `{:exit, reason}` as the work finished,
+  `{:error, :discarded}` when `discard_waiting/1` dropped it before it started,
   `{:error, :not_running}` when the limiter stopped first, or
   `{:error, :timeout}`. A timeout drops any later reply but does not cancel the
   work. Await each reference once, from the process that submitted it.
@@ -178,7 +184,7 @@ defmodule RateLimiter do
   Gives up on the reply to a `submit/2`.
 
   Drops the reply, including one already in the mailbox, and stops monitoring
-  the limiter. The work still runs.
+  the limiter. The work still runs unless `discard_waiting/1` drops it first.
   """
   @spec forget(reply_ref()) :: :ok
   def forget(ref) when is_reference(ref) do
@@ -198,6 +204,16 @@ defmodule RateLimiter do
   """
   @spec status(limiter()) :: {:ok, status()} | {:error, :not_running}
   def status(limiter), do: call(limiter, :status)
+
+  @doc """
+  Discards all waiting work and returns how many entries were dropped.
+
+  Work already running is unaffected. Each discarded `submit/2` caller receives
+  `{ref, {:error, :discarded}}`; discarded `enqueue/2` work is dropped silently.
+  Pacing state is kept, so new work is still paced against earlier starts.
+  """
+  @spec discard_waiting(limiter()) :: {:ok, non_neg_integer()} | {:error, :not_running}
+  def discard_waiting(limiter), do: call(limiter, :discard_waiting)
 
   ######################
   # INTERNAL CALLBACKS #
@@ -269,6 +285,16 @@ defmodule RateLimiter do
 
   def handle_call(:status, _from, state) do
     {:reply, {:ok, %{waiting: state.waiting, active: map_size(state.active_tasks)}}, state}
+  end
+
+  def handle_call(:discard_waiting, _from, state) do
+    state.queue
+    |> :queue.to_list()
+    |> Enum.each(fn {reply_to, _fun} ->
+      notify(reply_to, {:error, :discarded})
+    end)
+
+    {:reply, {:ok, state.waiting}, %{state | queue: :queue.new(), waiting: 0}}
   end
 
   @impl GenServer
@@ -415,8 +441,8 @@ defmodule RateLimiter do
     end
   end
 
-  @spec notify(reply_ref() | nil, {:exit, any()} | nil) :: :ok
-  defp notify(reply_to, {:exit, _reason} = reply) when is_reference(reply_to) do
+  @spec notify(reply_ref() | nil, {:exit, any()} | {:error, :discarded} | nil) :: :ok
+  defp notify(reply_to, {_tag, _reason} = reply) when is_reference(reply_to) do
     send(reply_to, {reply_to, reply})
     :ok
   end

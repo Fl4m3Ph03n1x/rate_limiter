@@ -327,6 +327,7 @@ defmodule RateLimiterTest do
 
     assert RateLimiter.enqueue(test, fn -> :ok end) == {:error, :not_running}
     assert RateLimiter.status(test) == {:error, :not_running}
+    assert RateLimiter.discard_waiting(test) == {:error, :not_running}
   end
 
   test "start_link requires a name" do
@@ -553,6 +554,199 @@ defmodule RateLimiterTest do
     assert_receive {:ran, second}
     assert_receive {:ran, third}
     assert [first, second, third] == [:a, :b, :c]
+  end
+
+  test "discard_waiting drops waiting work, returns its count, and leaves running work alone",
+       %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 2, max_active: 1}
+      )
+
+    test_pid = self()
+
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :a}) end)
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :b}) end)
+    assert_receive {:started, :active, active}
+
+    assert RateLimiter.discard_waiting(limiter) == {:ok, 2}
+    assert RateLimiter.status(limiter) == {:ok, %{waiting: 0, active: 1}}
+
+    active_monitor = Process.monitor(active)
+    send(active, :release)
+    assert_receive {:DOWN, ^active_monitor, :process, ^active, :normal}
+
+    assert RateLimiter.status(limiter) == {:ok, %{waiting: 0, active: 0}}
+    refute_received {:ran, _label}
+  end
+
+  test "discard_waiting on an empty queue discards nothing", %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 1, max_active: 1}
+      )
+
+    assert RateLimiter.discard_waiting(limiter) == {:ok, 0}
+  end
+
+  test "a discarded submit is reported to await as discarded", %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 1, max_active: 1}
+      )
+
+    test_pid = self()
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    {:ok, ref} = RateLimiter.submit(limiter, fn -> :never_runs end)
+
+    {:ok, 1} = RateLimiter.discard_waiting(limiter)
+
+    assert RateLimiter.await(ref, 1_000) == {:error, :discarded}
+  end
+
+  test "a discarded submit gets one {ref, {:error, :discarded}} message and keeps no monitor",
+       %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 1, max_active: 1}
+      )
+
+    test_pid = self()
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    {:ok, ref} = RateLimiter.submit(limiter, fn -> :never_runs end)
+
+    {:ok, 1} = RateLimiter.discard_waiting(limiter)
+
+    assert_receive {^ref, {:error, :discarded}}
+    assert Process.info(self(), :monitors) == {:monitors, []}
+
+    :ok = stop_supervised({RateLimiter, test})
+
+    refute_received {:DOWN, ^ref, :process, _pid, _reason}
+  end
+
+  test "discard_waiting notifies discarded submits in order and enqueued work not at all",
+       %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 3, max_active: 1}
+      )
+
+    test_pid = self()
+
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    {:ok, a} = RateLimiter.submit(limiter, fn -> :never_runs end)
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :b}) end)
+    {:ok, c} = RateLimiter.submit(limiter, fn -> :never_runs end)
+    assert_receive {:started, :active, _active}
+
+    assert RateLimiter.discard_waiting(limiter) == {:ok, 3}
+
+    assert Process.info(self(), :messages) ==
+             {:messages, [{a, {:error, :discarded}}, {c, {:error, :discarded}}]}
+  end
+
+  test "a forgotten submit that is discarded leaves no message", %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 1, max_active: 1}
+      )
+
+    test_pid = self()
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    {:ok, ref} = RateLimiter.submit(limiter, fn -> :never_runs end)
+    :ok = RateLimiter.forget(ref)
+
+    assert RateLimiter.discard_waiting(limiter) == {:ok, 1}
+
+    refute_received {^ref, _reply}
+  end
+
+  test "work accepted after discard_waiting still runs", %{test: test} do
+    limiter =
+      start_supervised!(
+        {RateLimiter, name: test, algorithm: Unlimited, max_waiting: 1, max_active: 1}
+      )
+
+    test_pid = self()
+
+    :ok = RateLimiter.enqueue(limiter, blocking_task(test_pid, :active))
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :discarded}) end)
+    {:ok, 1} = RateLimiter.discard_waiting(limiter)
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :after}) end)
+
+    assert_receive {:started, :active, active}
+    send(active, :release)
+
+    assert_receive {:ran, :after}
+    refute_received {:ran, :discarded}
+  end
+
+  test "a timer pending when waiting work is discarded starts nothing when it fires",
+       %{test: test} do
+    test_pid = self()
+    clock = start_supervised!({Agent, fn -> 0 end})
+
+    limiter =
+      start_supervised!(
+        {RateLimiter,
+         name: test,
+         algorithm: ClosedUntil,
+         opens_at: 100,
+         max_waiting: 1,
+         max_active: 1,
+         clock: fn -> Agent.get(clock, & &1) end,
+         send_after: fn pid, message, delay ->
+           send(test_pid, {:timer_requested, pid, message, delay})
+           make_ref()
+         end}
+      )
+
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :discarded}) end)
+    assert_received {:timer_requested, ^limiter, timer_message, 100}
+    {:ok, 1} = RateLimiter.discard_waiting(limiter)
+
+    Agent.update(clock, fn _now -> 100 end)
+    send(limiter, timer_message)
+
+    assert RateLimiter.status(limiter) == {:ok, %{waiting: 0, active: 0}}
+    refute_received {:timer_requested, _pid, _message, _delay}
+    refute_received {:ran, :discarded}
+  end
+
+  test "work accepted after a discard waits for the timer already pending", %{test: test} do
+    test_pid = self()
+    clock = start_supervised!({Agent, fn -> 0 end})
+
+    limiter =
+      start_supervised!(
+        {RateLimiter,
+         name: test,
+         algorithm: ClosedUntil,
+         opens_at: 100,
+         max_waiting: 1,
+         max_active: 1,
+         clock: fn -> Agent.get(clock, & &1) end,
+         send_after: fn pid, message, delay ->
+           send(test_pid, {:timer_requested, pid, message, delay})
+           make_ref()
+         end}
+      )
+
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :discarded}) end)
+    assert_received {:timer_requested, ^limiter, timer_message, 100}
+    {:ok, 1} = RateLimiter.discard_waiting(limiter)
+    :ok = RateLimiter.enqueue(limiter, fn -> send(test_pid, {:ran, :after}) end)
+
+    refute_received {:timer_requested, _pid, _message, _delay}
+    assert RateLimiter.status(limiter) == {:ok, %{waiting: 1, active: 0}}
+
+    Agent.update(clock, fn _now -> 100 end)
+    send(limiter, timer_message)
+
+    assert_receive {:ran, :after}
+    refute_received {:ran, :discarded}
   end
 
   defp blocking_task(test_pid, label) do
