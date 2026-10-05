@@ -26,7 +26,8 @@ at once, and isolates failures in supervised tasks.
 
 - **Bounded admission.** `max_waiting` caps the queue. A full queue rejects new
   work at once with `{:error, :queue_full}`: it never blocks the caller or
-  drops work it has already accepted.
+  drops work it has already accepted. Waiting work is dropped only on request,
+  through `discard_waiting/1`.
 - **Every start is authorized.** The limiter asks the algorithm before each
   start and never starts work it refuses. While waiting it holds one timer for
   the reported delay, so it never polls.
@@ -57,16 +58,16 @@ at once, and isolates failures in supervised tasks.
   waiting task. `submit/2` callers learn of it as `{:error, :not_running}`;
   `enqueue/2` callers are not notified. A reply racing the limiter's stop can be
   lost even though the work ran. There is no persistence or replay.
-- **Accepted work cannot be cancelled.** Once admitted, work runs unless the
-  limiter stops, even after an `await/2` timeout, `forget/1`, or its caller's
-  death. Only the reply is dropped.
+- **Accepted work cannot be cancelled individually.** Once admitted, work runs
+  unless the limiter stops or `discard_waiting/1` drops it before it starts,
+  even after an `await/2` timeout, `forget/1`, or its caller's death. 
 - **Awaiting your own limiter can block.** A task that submits to its own
   limiter and awaits the reply keeps its slot while it waits. When every slot is
   busy, the inner work cannot start and the await times out.
-- **One process per limiter.** Every `enqueue/2`, `submit/2`, and `status/1` is
-  a `GenServer.call` to that process. Only `:noproc` and shutdown exits become
-  `{:error, :not_running}`; a call timeout under heavy load still exits the
-  caller.
+- **One process per limiter.** Every `enqueue/2`, `submit/2`, `status/1`, and
+  `discard_waiting/1` is a `GenServer.call` to that process. Only `:noproc` and
+  shutdown exits become `{:error, :not_running}`; a call timeout under heavy
+  load still exits the caller.
 - **Algorithms see only time.** An algorithm cannot weigh work by cost or look
   at the queue.
 - **Pacing counts starts, not arrivals.** Network jitter can still bunch
@@ -181,6 +182,7 @@ end
 | --- | --- |
 | `{:ok, result}` | The function returned `result`. |
 | `{:exit, reason}` | The function raised, threw, or exited. |
+| `{:error, :discarded}` | `discard_waiting/1` dropped the work before it started. |
 | `{:error, :not_running}` | The limiter stopped before the work finished. |
 | `{:error, :timeout}` | No reply in time. The work still runs; its reply is dropped. |
 
@@ -191,6 +193,7 @@ instead. It receives one of:
 | --- | --- |
 | `{ref, {:ok, result}}` | The function returned `result`. |
 | `{ref, {:exit, reason}}` | The function raised, threw, or exited. |
+| `{ref, {:error, :discarded}}` | `discard_waiting/1` dropped the work before it started. |
 | `{:DOWN, ref, :process, pid, reason}` | The limiter stopped before the work finished. |
 
 For example:
@@ -213,7 +216,8 @@ end
 ```
 
 Call `RateLimiter.forget(ref)` to give up on a reply. It is dropped, even if it
-has already arrived, but the work still runs.
+has already arrived, but the work still runs unless `discard_waiting/1` drops it
+first.
 
 A reference can be awaited once, and only by the process that called
 `submit/2`.
@@ -225,6 +229,19 @@ A reference can be awaited once, and only by the process that called
 ```elixir
 {:ok, %{waiting: 4, active: 2}} = RateLimiter.status(MyApp.SearchApiLimiter)
 ```
+
+### Discarding waiting work
+
+`discard_waiting/1` empties the queue and returns how many entries it dropped:
+
+```elixir
+{:ok, 4} = RateLimiter.discard_waiting(MyApp.SearchApiLimiter)
+```
+
+Running work is not affected. Each discarded `submit/2` caller receives
+`{ref, {:error, :discarded}}`; discarded `enqueue/2` work is dropped without
+notice. Pacing is not reset, so later work is still paced against earlier
+starts. Any process can call it, and it discards every caller's waiting work.
 
 ### Writing an algorithm
 
@@ -308,13 +325,17 @@ sequenceDiagram
   else accepted
     Limiter-->>Caller: {:ok, ref} or :ok
     Note over Limiter: work waits in the FIFO queue
-    loop until a slot is free and the algorithm allows a start
-      Limiter->>Algorithm: may the next task start?
-      Algorithm-->>Limiter: yes, or wait N ms
+    alt discarded while waiting
+      Limiter-->>Caller: {ref, {:error, :discarded}} (submit/2 only)
+    else started
+      loop until a slot is free and the algorithm allows a start
+        Limiter->>Algorithm: may the next task start?
+        Algorithm-->>Limiter: yes, or wait N ms
+      end
+      Limiter->>Task: start the submitted work
+      Task-->>Caller: result, collected with await/2 (submit/2 only)
+      Task-->>Limiter: done, slot freed
     end
-    Limiter->>Task: start the submitted work
-    Task-->>Caller: result, collected with await/2 (submit/2 only)
-    Task-->>Limiter: done, slot freed
   end
 ```
 
