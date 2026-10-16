@@ -26,7 +26,8 @@ defmodule RateLimiter.OptionsTest do
                   key: :rate,
                   value: 0,
                   reason: :invalid,
-                  message: "invalid value for option: :rate, got: 0"
+                  message:
+                    "invalid value for option: :rate, got: 0; expected a positive integer (> 0)"
                 }}
     end
 
@@ -37,7 +38,8 @@ defmodule RateLimiter.OptionsTest do
                   key: :rate,
                   value: -1,
                   reason: :invalid,
-                  message: "invalid value for option: :rate, got: -1"
+                  message:
+                    "invalid value for option: :rate, got: -1; expected a positive integer (> 0)"
                 }}
     end
 
@@ -48,7 +50,8 @@ defmodule RateLimiter.OptionsTest do
                   key: :rate,
                   value: 1.5,
                   reason: :invalid,
-                  message: "invalid value for option: :rate, got: 1.5"
+                  message:
+                    "invalid value for option: :rate, got: 1.5; expected a positive integer (> 0)"
                 }}
     end
   end
@@ -69,13 +72,97 @@ defmodule RateLimiter.OptionsTest do
                   key: :rate,
                   value: 0,
                   reason: :invalid,
-                  message: "invalid value for option: :rate, got: 0"
+                  message:
+                    "invalid value for option: :rate, got: 0; expected a positive integer (> 0)"
                 }}
     end
 
     test "refuses a default that is not a positive integer" do
       assert_raise FunctionClauseError, fn ->
         Options.optional_positive_integer([], :rate, 0)
+      end
+    end
+  end
+
+  describe "integer_in_range/3" do
+    test "returns a value inside the range" do
+      assert Options.integer_in_range([rate: 5], :rate, 1..10) == {:ok, 5}
+    end
+
+    test "returns the range's first value" do
+      assert Options.integer_in_range([rate: 1], :rate, 1..10) == {:ok, 1}
+    end
+
+    test "returns the range's last value" do
+      assert Options.integer_in_range([rate: 10], :rate, 1..10) == {:ok, 10}
+    end
+
+    test "rejects a value below the range" do
+      assert Options.integer_in_range([rate: 0], :rate, 1..10) ==
+               {:error,
+                %OptionError{
+                  key: :rate,
+                  value: 0,
+                  reason: :invalid,
+                  message:
+                    "invalid value for option: :rate, got: 0; expected an integer in range 1..10 with step 1"
+                }}
+    end
+
+    test "rejects a value above the range" do
+      assert Options.integer_in_range([rate: 11], :rate, 1..10) ==
+               {:error,
+                %OptionError{
+                  key: :rate,
+                  value: 11,
+                  reason: :invalid,
+                  message:
+                    "invalid value for option: :rate, got: 11; expected an integer in range 1..10 with step 1"
+                }}
+    end
+
+    test "returns a member of a stepped range" do
+      assert Options.integer_in_range([rate: 4], :rate, 1..10//3) == {:ok, 4}
+    end
+
+    test "rejects a value between the steps of a range" do
+      assert Options.integer_in_range([rate: 5], :rate, 1..10//3) ==
+               {:error,
+                %OptionError{
+                  key: :rate,
+                  value: 5,
+                  reason: :invalid,
+                  message:
+                    "invalid value for option: :rate, got: 5; expected an integer in range 1..10 with step 3"
+                }}
+    end
+
+    test "rejects a non-integer inside the range" do
+      assert Options.integer_in_range([rate: 5.0], :rate, 1..10) ==
+               {:error,
+                %OptionError{
+                  key: :rate,
+                  value: 5.0,
+                  reason: :invalid,
+                  message:
+                    "invalid value for option: :rate, got: 5.0; expected an integer in range 1..10 with step 1"
+                }}
+    end
+
+    test "rejects a missing option" do
+      assert Options.integer_in_range([burst: 5], :rate, 1..10) ==
+               {:error,
+                %OptionError{
+                  key: :rate,
+                  value: nil,
+                  reason: :missing,
+                  message: "missing required option: :rate"
+                }}
+    end
+
+    test "refuses a bound that is not a range" do
+      assert_raise FunctionClauseError, fn ->
+        Options.integer_in_range([rate: 5], :rate, [1, 10])
       end
     end
   end
@@ -96,7 +183,7 @@ defmodule RateLimiter.OptionsTest do
                   key: [:foo],
                   value: [foo: 2],
                   reason: :unknown,
-                  message: "unknown options: [foo: 2]"
+                  message: "unknown options: [foo: 2]; allowed keys are: rate"
                 }}
     end
 
@@ -107,18 +194,18 @@ defmodule RateLimiter.OptionsTest do
                   key: [:foo],
                   value: [foo: 1, foo: 3],
                   reason: :unknown,
-                  message: "unknown options: [foo: 1, foo: 3]"
+                  message: "unknown options: [foo: 1, foo: 3]; allowed keys are: rate"
                 }}
     end
 
     test "names several unknown options in the order given" do
-      assert Options.reject_unknown([foo: 1, rate: 2, bar: 3], [:rate]) ==
+      assert Options.reject_unknown([foo: 1, rate: 2, bar: 3], [:rate, :burst]) ==
                {:error,
                 %OptionError{
                   key: [:foo, :bar],
                   value: [foo: 1, bar: 3],
                   reason: :unknown,
-                  message: "unknown options: [foo: 1, bar: 3]"
+                  message: "unknown options: [foo: 1, bar: 3]; allowed keys are: rate, burst"
                 }}
     end
   end
@@ -163,7 +250,7 @@ defmodule RateLimiter.OptionsTest do
                   key: [:foo],
                   value: [foo: 2],
                   reason: :unknown,
-                  message: "unknown options: [foo: 2]"
+                  message: "unknown options: [foo: 2]; allowed keys are: rate"
                 }}
     end
 
@@ -185,7 +272,7 @@ defmodule RateLimiter.OptionsTest do
                   key: [:foo],
                   value: [foo: 1, foo: 2],
                   reason: :unknown,
-                  message: "unknown options: [foo: 1, foo: 2]"
+                  message: "unknown options: [foo: 1, foo: 2]; allowed keys are: rate"
                 }}
     end
   end

@@ -4,9 +4,12 @@ defmodule RateLimiter.OptionError do
 
   Functions that validate options return it as
   `{:error, %RateLimiter.OptionError{}}` instead of raising. Match on its fields
-  to tell failures apart, or pass it to `raise/1` or `Exception.message/1`. Only
-  this package builds it, through `exception/1` with `:key`, `:value`, and
-  `:reason`; the message is derived from them.
+  to tell failures apart, or pass it to `raise/1` or `Exception.message/1`.
+  Any code that validates options, including code outside this package, builds
+  it with `exception/1`, which derives the message.
+
+  The message is for people, not for code: match on `:reason`, `:key`, and
+  `:value`, never on `:message`, whose wording may change in any release.
 
   Returning an exception struct inside an error tuple follows libraries such as
   [`NimbleOptions.ValidationError`](https://hexdocs.pm/nimble_options/NimbleOptions.ValidationError.html),
@@ -24,10 +27,10 @@ defmodule RateLimiter.OptionError do
       `:empty`.
     * `:reason` - why the options were rejected, see `t:reason/0`.
     * `:message` - a human-readable description, derived from the fields
-      above.
+      above and the optional `:details` given to `exception/1`.
   """
 
-  @enforce_keys [:key, :value, :reason]
+  @enforce_keys [:key, :value, :reason, :message]
   defexception [:key, :value, :reason, :message]
 
   @typedoc """
@@ -52,13 +55,19 @@ defmodule RateLimiter.OptionError do
   @doc """
   Builds the error from `:key`, `:value`, and `:reason`, and derives its message.
 
-  Raises `KeyError` when any of the three is missing.
+  An optional `:details` string, such as `"expected a positive integer"`, is
+  appended to the message after `"; "`, for any reason. It is not stored as a
+  field, so code cannot match on it.
+
+  Raises `KeyError` when `:key`, `:value`, or `:reason` is missing.
   """
   @impl true
+  @spec exception(keyword()) :: t()
   def exception(opts) when is_list(opts) do
     key = Keyword.fetch!(opts, :key)
     value = Keyword.fetch!(opts, :value)
     reason = Keyword.fetch!(opts, :reason)
+    details = Keyword.get(opts, :details)
 
     message =
       case reason do
@@ -69,11 +78,19 @@ defmodule RateLimiter.OptionError do
         :duplicate -> "duplicate options: #{inspect(value)}"
       end
 
+    complete_message =
+      if is_nil(details) do
+        message
+      else
+        "#{message}; #{details}"
+      end
+      |> String.trim()
+
     %__MODULE__{
       key: key,
       value: value,
       reason: reason,
-      message: message
+      message: complete_message
     }
   end
 end
