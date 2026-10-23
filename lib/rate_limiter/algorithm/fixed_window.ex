@@ -68,8 +68,8 @@ defmodule RateLimiter.Algorithm.FixedWindow do
   @impl Algorithm
   @spec init(keyword()) :: {:ok, t()} | {:error, OptionError.t()}
   def init(opts) do
-    with {:ok, requests_per_window} <- Options.positive_integer(opts, :requests_per_window),
-         {:ok, window_duration_ms} <- Options.positive_integer(opts, :window_duration_ms) do
+    with {:ok, requests_per_window} <- Options.fetch_positive_integer(opts, :requests_per_window),
+         {:ok, window_duration_ms} <- Options.fetch_positive_integer(opts, :window_duration_ms) do
       {:ok,
        %__MODULE__{
          requests_per_window: requests_per_window,
@@ -91,13 +91,17 @@ defmodule RateLimiter.Algorithm.FixedWindow do
   @spec reconfigure(t(), keyword(), Algorithm.now()) :: {:ok, t()} | {:error, OptionError.t()}
   def reconfigure(%__MODULE__{} = state, opts, _now) do
     with {:ok, requests_per_window} <-
-           Options.optional_positive_integer(
+           Options.fetch_optional_positive_integer(
              opts,
              :requests_per_window,
              state.requests_per_window
            ),
          {:ok, window_duration_ms} <-
-           Options.optional_positive_integer(opts, :window_duration_ms, state.window_duration_ms) do
+           Options.fetch_optional_positive_integer(
+             opts,
+             :window_duration_ms,
+             state.window_duration_ms
+           ) do
       next_window = %{
         requests_per_window: requests_per_window,
         window_duration_ms: window_duration_ms

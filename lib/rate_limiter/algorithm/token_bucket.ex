@@ -40,8 +40,8 @@ defmodule RateLimiter.Algorithm.TokenBucket do
   @impl Algorithm
   @spec init(keyword()) :: {:ok, t()} | {:error, OptionError.t()}
   def init(opts) do
-    with {:ok, bucket_size} <- Options.positive_integer(opts, :bucket_size),
-         {:ok, refill_interval_ms} <- Options.positive_integer(opts, :refill_interval_ms) do
+    with {:ok, bucket_size} <- Options.fetch_positive_integer(opts, :bucket_size),
+         {:ok, refill_interval_ms} <- Options.fetch_positive_integer(opts, :refill_interval_ms) do
       {:ok,
        %__MODULE__{
          bucket_size: bucket_size,
@@ -64,9 +64,13 @@ defmodule RateLimiter.Algorithm.TokenBucket do
   @spec reconfigure(t(), keyword(), Algorithm.now()) :: {:ok, t()} | {:error, OptionError.t()}
   def reconfigure(%__MODULE__{} = state, opts, now) do
     with {:ok, bucket_size} <-
-           Options.optional_positive_integer(opts, :bucket_size, state.bucket_size),
+           Options.fetch_optional_positive_integer(opts, :bucket_size, state.bucket_size),
          {:ok, refill_interval_ms} <-
-           Options.optional_positive_integer(opts, :refill_interval_ms, state.refill_interval_ms) do
+           Options.fetch_optional_positive_integer(
+             opts,
+             :refill_interval_ms,
+             state.refill_interval_ms
+           ) do
       settled = settle(state, now)
 
       {:ok,

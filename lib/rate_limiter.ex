@@ -239,8 +239,8 @@ defmodule RateLimiter do
     algorithm = Keyword.fetch!(opts, :algorithm)
 
     # If any of these calls fail, we do not start the `task_supervisor`.
-    max_waiting = Options.positive_integer!(opts, :max_waiting)
-    max_active = Options.positive_integer!(opts, :max_active)
+    {:ok, max_waiting} = Options.fetch_positive_integer(opts, :max_waiting)
+    {:ok, max_active} = Options.fetch_positive_integer(opts, :max_active)
     algorithm_state = algorithm.init(opts)
 
     {:ok, task_supervisor} = Task.Supervisor.start_link()

@@ -84,7 +84,7 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
 
   @spec calculate_interval(keyword()) :: {:ok, pos_integer()} | {:error, OptionError.t()}
   defp calculate_interval(opts) do
-    case Options.integer_in_range(opts, :requests_per_second, 1..@milliseconds_per_second) do
+    case Options.fetch_integer_in_range(opts, :requests_per_second, 1..@milliseconds_per_second) do
       {:ok, rps} -> {:ok, div(@milliseconds_per_second + rps - 1, rps)}
       {:error, reason} -> {:error, reason}
     end
