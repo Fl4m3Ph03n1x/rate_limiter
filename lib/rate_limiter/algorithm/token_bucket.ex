@@ -14,7 +14,7 @@ defmodule RateLimiter.Algorithm.TokenBucket do
 
   @behaviour RateLimiter.Algorithm
 
-  alias RateLimiter.{Algorithm, Options}
+  alias RateLimiter.{Algorithm, OptionError, Options}
 
   @typedoc "The bucket's capacity, refill interval, tokens left, and last refill."
   @type t :: %__MODULE__{
@@ -27,6 +27,10 @@ defmodule RateLimiter.Algorithm.TokenBucket do
   @enforce_keys [:bucket_size, :refill_interval_ms, :tokens]
   defstruct [:bucket_size, :refill_interval_ms, :tokens, refilled_at: nil]
 
+  @impl Algorithm
+  @spec allowed_options :: [atom()]
+  def allowed_options, do: [:bucket_size, :refill_interval_ms]
+
   @doc """
   Builds a full bucket from the limiter's options.
 
@@ -34,16 +38,46 @@ defmodule RateLimiter.Algorithm.TokenBucket do
   ignores every other option.
   """
   @impl Algorithm
-  @spec init(keyword()) :: t()
+  @spec init(keyword()) :: {:ok, t()} | {:error, OptionError.t()}
   def init(opts) do
-    bucket_size = Options.positive_integer!(opts, :bucket_size)
-    refill_interval_ms = Options.positive_integer!(opts, :refill_interval_ms)
+    with {:ok, bucket_size} <- Options.positive_integer(opts, :bucket_size),
+         {:ok, refill_interval_ms} <- Options.positive_integer(opts, :refill_interval_ms) do
+      {:ok,
+       %__MODULE__{
+         bucket_size: bucket_size,
+         refill_interval_ms: refill_interval_ms,
+         tokens: bucket_size
+       }}
+    end
+  end
 
-    %__MODULE__{
-      bucket_size: bucket_size,
-      refill_interval_ms: refill_interval_ms,
-      tokens: bucket_size
-    }
+  @doc """
+  Changes `:bucket_size`, `:refill_interval_ms`, or both, at `now`.
+
+  Tokens earned up to `now` are counted under the old settings first. A smaller
+  bucket drops the tokens above its new size; a larger one gains none and fills
+  at the refill rate. A new refill interval restarts the refill at `now`,
+  discarding partial progress; an unchanged interval keeps it. An unused bucket
+  keeps its tokens up to the new size and starts refilling at its first start.
+  """
+  @impl Algorithm
+  @spec reconfigure(t(), keyword(), Algorithm.now()) :: {:ok, t()} | {:error, OptionError.t()}
+  def reconfigure(%__MODULE__{} = state, opts, now) do
+    with {:ok, bucket_size} <-
+           Options.optional_positive_integer(opts, :bucket_size, state.bucket_size),
+         {:ok, refill_interval_ms} <-
+           Options.optional_positive_integer(opts, :refill_interval_ms, state.refill_interval_ms) do
+      settled = settle(state, now)
+
+      {:ok,
+       %__MODULE__{
+         settled
+         | bucket_size: bucket_size,
+           refill_interval_ms: refill_interval_ms,
+           tokens: min(settled.tokens, bucket_size),
+           refilled_at: refilled_at(settled, refill_interval_ms, now)
+       }}
+    end
   end
 
   @impl Algorithm
@@ -62,6 +96,10 @@ defmodule RateLimiter.Algorithm.TokenBucket do
     end
   end
 
+  ###########
+  # PRIVATE #
+  ###########
+
   # A full bucket earns nothing, so its next token is timed from now.
   @spec refill(t(), Algorithm.now()) :: t()
   defp refill(%__MODULE__{} = state, now) do
@@ -77,4 +115,22 @@ defmodule RateLimiter.Algorithm.TokenBucket do
       }
     end
   end
+
+  # Counts what the old settings earned up to now, so a change cannot recount it.
+  @spec settle(t(), Algorithm.now()) :: t()
+  defp settle(%__MODULE__{refilled_at: nil} = state, _now), do: state
+  defp settle(%__MODULE__{} = state, now), do: refill(state, now)
+
+  # A new interval discards partial progress, which would otherwise earn several tokens at once.
+  @spec refilled_at(t(), pos_integer(), Algorithm.now()) :: integer() | nil
+  defp refilled_at(%__MODULE__{refilled_at: nil}, _refill_interval_ms, _now), do: nil
+
+  defp refilled_at(
+         %__MODULE__{refilled_at: refilled_at, refill_interval_ms: refill_interval_ms},
+         refill_interval_ms,
+         _now
+       ),
+       do: refilled_at
+
+  defp refilled_at(%__MODULE__{}, _refill_interval_ms, now), do: now
 end

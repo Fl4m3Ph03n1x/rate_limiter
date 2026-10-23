@@ -31,15 +31,19 @@ defmodule RateLimiter.Algorithm.FixedWindow do
 
   @behaviour RateLimiter.Algorithm
 
-  alias RateLimiter.Algorithm
-  alias RateLimiter.Options
+  alias RateLimiter.{Algorithm, OptionError, Options}
 
-  @typedoc "The limit and duration of each window, when the current one opened, and its starts so far."
+  @typedoc """
+  The limit and duration of each window, when the current one opened, its starts
+  so far, and any change waiting for the next window.
+  """
   @type t :: %__MODULE__{
           requests_per_window: pos_integer(),
           window_duration_ms: pos_integer(),
           window_started_at: integer() | nil,
-          requests_in_current_window: non_neg_integer()
+          requests_in_current_window: non_neg_integer(),
+          next_window:
+            %{requests_per_window: pos_integer(), window_duration_ms: pos_integer()} | nil
         }
 
   @enforce_keys [:requests_per_window, :window_duration_ms]
@@ -47,8 +51,13 @@ defmodule RateLimiter.Algorithm.FixedWindow do
     :requests_per_window,
     :window_duration_ms,
     window_started_at: nil,
-    requests_in_current_window: 0
+    requests_in_current_window: 0,
+    next_window: nil
   ]
+
+  @impl Algorithm
+  @spec allowed_options :: [atom()]
+  def allowed_options, do: [:requests_per_window, :window_duration_ms]
 
   @doc """
   Builds the pacing state from the limiter's options.
@@ -57,15 +66,45 @@ defmodule RateLimiter.Algorithm.FixedWindow do
   integers, and ignores every other option.
   """
   @impl Algorithm
-  @spec init(keyword()) :: t()
+  @spec init(keyword()) :: {:ok, t()} | {:error, OptionError.t()}
   def init(opts) do
-    requests_per_window = Options.positive_integer!(opts, :requests_per_window)
-    window_duration_ms = Options.positive_integer!(opts, :window_duration_ms)
+    with {:ok, requests_per_window} <- Options.positive_integer(opts, :requests_per_window),
+         {:ok, window_duration_ms} <- Options.positive_integer(opts, :window_duration_ms) do
+      {:ok,
+       %__MODULE__{
+         requests_per_window: requests_per_window,
+         window_duration_ms: window_duration_ms
+       }}
+    end
+  end
 
-    %__MODULE__{
-      requests_per_window: requests_per_window,
-      window_duration_ms: window_duration_ms
-    }
+  @doc """
+  Changes `:requests_per_window`, `:window_duration_ms`, or both, from the next
+  window.
+
+  The current window keeps its limit and duration, so a change never lets more
+  starts into it. Options not given keep their current values, and a later
+  change replaces a pending one entirely. Before the first window opens, the
+  change applies at once.
+  """
+  @impl Algorithm
+  @spec reconfigure(t(), keyword(), Algorithm.now()) :: {:ok, t()} | {:error, OptionError.t()}
+  def reconfigure(%__MODULE__{} = state, opts, _now) do
+    with {:ok, requests_per_window} <-
+           Options.optional_positive_integer(
+             opts,
+             :requests_per_window,
+             state.requests_per_window
+           ),
+         {:ok, window_duration_ms} <-
+           Options.optional_positive_integer(opts, :window_duration_ms, state.window_duration_ms) do
+      next_window = %{
+        requests_per_window: requests_per_window,
+        window_duration_ms: window_duration_ms
+      }
+
+      {:ok, schedule_change(state, next_window)}
+    end
   end
 
   @impl Algorithm
@@ -80,7 +119,12 @@ defmodule RateLimiter.Algorithm.FixedWindow do
         now
       )
       when now - window_started_at >= window_duration_ms do
-    {:ok, %__MODULE__{state | window_started_at: now, requests_in_current_window: 1}}
+    {:ok,
+     %__MODULE__{
+       apply_next_window(state)
+       | window_started_at: now,
+         requests_in_current_window: 1
+     }}
   end
 
   def acquire(
@@ -97,5 +141,36 @@ defmodule RateLimiter.Algorithm.FixedWindow do
     else
       {:wait, window_duration_ms - (now - window_started_at), state}
     end
+  end
+
+  ###########
+  # PRIVATE #
+  ###########
+
+  # Before the first window there is no current window to finish, so a change applies at once.
+  @spec schedule_change(t(), map()) :: t()
+  defp schedule_change(%__MODULE__{window_started_at: nil} = state, next_window),
+    do: apply_next_window(%__MODULE__{state | next_window: next_window})
+
+  defp schedule_change(%__MODULE__{} = state, next_window),
+    do: %__MODULE__{state | next_window: next_window}
+
+  @spec apply_next_window(t()) :: t()
+  defp apply_next_window(%__MODULE__{next_window: nil} = state), do: state
+
+  defp apply_next_window(
+         %__MODULE__{
+           next_window: %{
+             requests_per_window: requests_per_window,
+             window_duration_ms: window_duration_ms
+           }
+         } = state
+       ) do
+    %__MODULE__{
+      state
+      | requests_per_window: requests_per_window,
+        window_duration_ms: window_duration_ms,
+        next_window: nil
+    }
   end
 end

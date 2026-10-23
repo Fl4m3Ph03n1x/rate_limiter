@@ -13,10 +13,16 @@ defmodule RateLimiterTest do
     @behaviour RateLimiter.Algorithm
 
     @impl RateLimiter.Algorithm
-    def init(_opts), do: :unlimited
+    def allowed_options, do: []
+
+    @impl RateLimiter.Algorithm
+    def init(_opts), do: {:ok, :unlimited}
 
     @impl RateLimiter.Algorithm
     def acquire(state, _now), do: {:ok, state}
+
+    @impl RateLimiter.Algorithm
+    def reconfigure(state, _opts, _now), do: {:ok, state}
   end
 
   defmodule ClosedUntil do
@@ -30,11 +36,17 @@ defmodule RateLimiterTest do
     @behaviour RateLimiter.Algorithm
 
     @impl RateLimiter.Algorithm
-    def init(opts), do: Keyword.fetch!(opts, :opens_at)
+    def allowed_options, do: [:opens_at]
+
+    @impl RateLimiter.Algorithm
+    def init(opts), do: {:ok, Keyword.fetch!(opts, :opens_at)}
 
     @impl RateLimiter.Algorithm
     def acquire(opens_at, now) when now >= opens_at, do: {:ok, opens_at}
     def acquire(opens_at, now), do: {:wait, opens_at - now, opens_at}
+
+    @impl RateLimiter.Algorithm
+    def reconfigure(opens_at, _opts, _now), do: {:ok, opens_at}
   end
 
   defmodule FirstStartOnly do
@@ -47,26 +59,43 @@ defmodule RateLimiterTest do
     @behaviour RateLimiter.Algorithm
 
     @impl RateLimiter.Algorithm
-    def init(_opts), do: :open
+    def allowed_options, do: []
+
+    @impl RateLimiter.Algorithm
+    def init(_opts), do: {:ok, :open}
 
     @impl RateLimiter.Algorithm
     def acquire(:open, _now), do: {:ok, :closed}
     def acquire(:closed, _now), do: {:wait, 100, :closed}
+
+    @impl RateLimiter.Algorithm
+    def reconfigure(state, _opts, _now), do: {:ok, state}
   end
 
   defmodule RejectsOptions do
     @moduledoc """
     Rejects every option list, as an algorithm does when its settings are invalid.
 
-    Lets a test observe how the limiter reports a failure raised by `init/1`.
+    Lets a test observe how the limiter reports an error returned by `init/1` or
+    `reconfigure/3`.
     """
     @behaviour RateLimiter.Algorithm
 
+    alias RateLimiter.OptionError
+
     @impl RateLimiter.Algorithm
-    def init(_opts), do: raise(ArgumentError, "invalid algorithm options")
+    def allowed_options, do: []
+
+    @impl RateLimiter.Algorithm
+    def init(_opts), do: {:error, rejection()}
 
     @impl RateLimiter.Algorithm
     def acquire(state, _now), do: {:ok, state}
+
+    @impl RateLimiter.Algorithm
+    def reconfigure(_state, _opts, _now), do: {:error, rejection()}
+
+    defp rejection, do: OptionError.exception(key: :any, value: nil, reason: :invalid)
   end
 
   test "enqueue returns once work is accepted, before the work finishes", %{test: test} do

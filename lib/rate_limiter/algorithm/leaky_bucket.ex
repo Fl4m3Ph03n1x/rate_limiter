@@ -18,8 +18,7 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
 
   @milliseconds_per_second 1_000
 
-  alias RateLimiter.Algorithm
-  alias RateLimiter.Options
+  alias RateLimiter.{Algorithm, OptionError, Options}
 
   @typedoc "The minimum gap between starts, and the previous actual start."
   @type t :: %__MODULE__{
@@ -30,6 +29,10 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
   @enforce_keys [:interval]
   defstruct [:interval, last_start_at: nil]
 
+  @impl Algorithm
+  @spec allowed_options :: [atom()]
+  def allowed_options, do: [:requests_per_second]
+
   @doc """
   Builds the pacing state from the limiter's options.
 
@@ -37,20 +40,26 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
   and ignores every other option.
   """
   @impl Algorithm
-  @spec init(keyword()) :: t()
+  @spec init(keyword()) :: {:ok, t()} | {:error, OptionError.t()}
   def init(opts) do
-    requests_per_second = Options.positive_integer!(opts, :requests_per_second)
-
-    if requests_per_second > @milliseconds_per_second do
-      raise ArgumentError,
-            ":requests_per_second must be an integer less than or equal to #{@milliseconds_per_second}, got: #{inspect(requests_per_second)}"
+    with {:ok, interval} <- calculate_interval(opts) do
+      {:ok, %__MODULE__{interval: interval}}
     end
+  end
 
-    interval = div(@milliseconds_per_second + requests_per_second - 1, requests_per_second)
+  @doc """
+  Changes the rate, effective for the next start.
 
-    %__MODULE__{
-      interval: interval
-    }
+  Requires `:requests_per_second`, as `init/1` does. The next start is measured
+  from the previous actual start with the new interval, so a raised rate allows
+  at most one immediate start and a lowered one waits longer.
+  """
+  @impl Algorithm
+  @spec reconfigure(t(), keyword(), Algorithm.now()) :: {:ok, t()} | {:error, OptionError.t()}
+  def reconfigure(%__MODULE__{} = state, opts, _now) do
+    with {:ok, interval} <- calculate_interval(opts) do
+      {:ok, %__MODULE__{state | interval: interval}}
+    end
   end
 
   @impl Algorithm
@@ -66,6 +75,18 @@ defmodule RateLimiter.Algorithm.LeakyBucket do
       {:wait, remaining, state}
     else
       {:ok, %__MODULE__{state | last_start_at: now}}
+    end
+  end
+
+  ###########
+  # PRIVATE #
+  ###########
+
+  @spec calculate_interval(keyword()) :: {:ok, pos_integer()} | {:error, OptionError.t()}
+  defp calculate_interval(opts) do
+    case Options.integer_in_range(opts, :requests_per_second, 1..@milliseconds_per_second) do
+      {:ok, rps} -> {:ok, div(@milliseconds_per_second + rps - 1, rps)}
+      {:error, reason} -> {:error, reason}
     end
   end
 end
